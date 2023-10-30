@@ -1,16 +1,16 @@
 AWS [Process Credential](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external.html) source where the `AWS_SECRET_ACCESS_KEY` is embedded into a `Trusted Platform Module (TPM)`.
 
-Use the binary as a way to use aws cli and any sdk library where you never actually need to know the _source_ `AWS_SECRET_ACCESS_KEY`. 
+Use the binary as a way to use aws cli and any sdk library where after setup, you don't actually need to know the _source_ AWS_SECRET_ACCESS_KEY. 
 
 To use this, you need to save the AWS_SECRET_ACCESS_KEY into the TPM:
 
 1. Directly load `AWS_SECRET_ACCESS_KEY` 
 
-  With this, you "load" the AWS_SECRET_ACCESS_KEY into a TPM's [persistentHandle](https://trustedcomputinggroup.org/wp-content/uploads/RegistryOfReservedTPM2HandlesAndLocalities_v1p1_pub.pdf) such that it can only be used on that TPM along. 
+   With this, you "load" the AWS_SECRET_ACCESS_KEY into a TPM's [persistentHandle](https://trustedcomputinggroup.org/wp-content/uploads/RegistryOfReservedTPM2HandlesAndLocalities_v1p1_pub.pdf) such that it can only be used on that TPM along. 
 
 2. Securely Transfer `AWS_SECRET_ACCESS_KEY` from one hose to another
 
-  This flow is not shown in this repo but is describe in:  [Duplicate an externally loaded HMAC key](https://github.com/salrashid123/tpm2/tree/master/tpm2_duplicate#duplicate-an-externally-loaded-hmac-key)
+   This flow is not shown in this repo but is describe in:  [Duplicate an externally loaded HMAC key](https://github.com/salrashid123/tpm2/tree/master/tpm2_duplicate#duplicate-an-externally-loaded-hmac-key)
 
 
 This repo shows how to do `1`
@@ -20,8 +20,6 @@ If you're curious how all this works, see
 - [AWS Credentials for Hardware Security Modules and TPM based AWS_SECRET_ACCESS_KEY](https://github.com/salrashid123/aws_hmac)
 
 ---
-
-
 
 ### Setup
 
