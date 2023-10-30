@@ -1,6 +1,3 @@
-
-# AWS Process Credentials for Hardware Security Modules (HSM) and TPM based AWS_SECRET_ACCESS_KEY
-
 AWS [Process Credential](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external.html) source where the `AWS_SECRET_ACCESS_KEY` is embedded into a `Trusted Platform Module (TPM)`.
 
 Use the binary as a way to use aws cli and any sdk library where you never actually need to know the _source_ `AWS_SECRET_ACCESS_KEY`. 
