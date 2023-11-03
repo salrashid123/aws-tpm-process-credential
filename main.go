@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"os"
 
-	"log"
-
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 
@@ -70,7 +68,7 @@ func main() {
 
 	argError := func(s string, v ...interface{}) {
 		//flag.PrintDefaults()
-		fmt.Fprintf(os.Stderr, "Invalid Argument error: "+s, v...)
+		fmt.Fprintf(os.Stderr, "aws-tpm-process-credential: Invalid Argument error: "+s, v...)
 		os.Exit(1)
 	}
 
@@ -83,7 +81,7 @@ func main() {
 	}
 	rwc, err := tpm2.OpenTPM(cfg.flTPMPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Can't open TPM %s: %v", cfg.flTPMPath, err)
+		fmt.Fprintf(os.Stderr, "aws-tpm-process-credential: Can't open TPM %s: %v", cfg.flTPMPath, err)
 		os.Exit(1)
 	}
 	defer func() {
@@ -91,7 +89,7 @@ func main() {
 			if strings.Contains(err.Error(), "file already closed") {
 				os.Exit(0)
 			}
-			fmt.Fprintf(os.Stderr, "Can't close TPM (may already be closed earlier) %s: %v", cfg.flTPMPath, err)
+			fmt.Fprintf(os.Stderr, "aws-tpm-process-credential: Can't close TPM (may already be closed earlier) %s: %v", cfg.flTPMPath, err)
 			os.Exit(1)
 		}
 	}()
@@ -104,7 +102,7 @@ func main() {
 		AccessKeyID: cfg.flAWSAccessKeyID,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error creating signer open TPM %s: %v", cfg.flTPMPath, err)
+		fmt.Fprintf(os.Stderr, "aws-tpm-process-credential: Error creating signer open TPM %s: %v", cfg.flTPMPath, err)
 		os.Exit(1)
 	}
 
@@ -122,7 +120,7 @@ func main() {
 			TPMSigner: tpmSigner,
 		})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Could not initialize Tink Credentials %v", err)
+			fmt.Fprintf(os.Stderr, "aws-tpm-process-credential: Could not initialize TPM Credentials %v", err)
 			os.Exit(1)
 		}
 
@@ -136,20 +134,20 @@ func main() {
 			TPMSigner: tpmSigner,
 		})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Could not initialize Tink Credentials %v", err)
+			fmt.Fprintf(os.Stderr, "aws-tpm-process-credential: Could not initialize TPM Credentials %v", err)
 			os.Exit(1)
 		}
 	}
 
 	val, err := creds.Get()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error parsing STS Credentials %v", err)
+		fmt.Fprintf(os.Stderr, "aws-tpm-process-credential: Error parsing STS Credentials %v", err)
 		os.Exit(1)
 	}
 
 	t, err := creds.ExpiresAt()
 	if err != nil {
-		log.Fatalf("Error getting Expiration Time %v", err)
+		fmt.Fprintf(os.Stderr, "aws-tpm-process-credential:  Error getting Expiration Time %v", err)
 	}
 
 	resp := &processCredentialsResponse{
@@ -162,7 +160,7 @@ func main() {
 
 	m, err := json.Marshal(resp)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error marshalling processCredential output %v", err)
+		fmt.Fprintf(os.Stderr, "aws-tpm-process-credential: Error marshalling processCredential output %v", err)
 		os.Exit(1)
 	}
 	fmt.Println(string(m))
