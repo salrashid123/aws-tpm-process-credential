@@ -199,7 +199,6 @@ tpm2_hmac -g sha256 -c hmac.ctx hmac_input.txt | xxd -p -c 256
 tpm2tss-genkey -u key.pub -r key.priv private.pem
 ```
 
-
 ### Session Auth
 
 This provide does not support any authorization policies you may have (eg [hmac with pcr policy](https://gist.github.com/salrashid123/9ee5e02d5991c8d53717bd9a179a65b0)).  
@@ -207,6 +206,27 @@ This provide does not support any authorization policies you may have (eg [hmac 
 This is a todo where we need to initialize an appropriate `tpm2.AuthHandle` with the sessions setup.  if you need something like this, LMK
 
 The same applies to the owner-auth (eg, it assumes no parent password is required...again, this could be just an enhancement if there is demand)
+
+### Encrypted TPM Sessions
+
+If you want to enable [TPM Encrypted sessions](https://github.com/salrashid123/tpm2/tree/master/tpm_encrypted_session), you should provide the "name" of a trusted key on the TPM for each call.
+
+A trusted key can be the EK Key. You can get the name using `tpm2_tools`:
+
+```bash
+tpm2_createek -c primary.ctx -G rsa -u ek.pub -Q
+tpm2_readpublic -c primary.ctx -o ek.pem -n name.bin -f pem -Q
+xxd -p -c 100 name.bin 
+  000bb50d34f6377bb3c2f41a1b4b6094ed6efcd7032d28054566db0766879dad1ee0
+```
+
+Then use the hex value returned in the `--tpm-session-encrypt-with-name=` argument.
+
+For example:
+
+```bash
+   --tpm-session-encrypt-with-name=000bb50d34f6377bb3c2f41a1b4b6094ed6efcd7032d28054566db0766879dad1ee0
+```
 
 #### References
 

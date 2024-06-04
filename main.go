@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"time"
 
@@ -41,16 +42,17 @@ const (
 )
 
 type credConfig struct {
-	flTPMPath          string
-	flPersistentHandle uint
-	flAWSAccessKeyID   string
-	flCredentialFile   string
-	flAWSRoleArn       string
-	flAWSRegion        string
-	flDuration         uint64
-	flTimeout          uint
-	flAWSSessionName   string
-	flAssumeRole       bool
+	flTPMPath              string
+	flPersistentHandle     uint
+	flAWSAccessKeyID       string
+	flCredentialFile       string
+	flAWSRoleArn           string
+	flAWSRegion            string
+	flDuration             uint64
+	flTimeout              uint
+	flAWSSessionName       string
+	flAssumeRole           bool
+	flTPMSessionPublicName string
 }
 
 var (
@@ -117,6 +119,7 @@ func main() {
 	flag.StringVar(&cfg.flAWSAccessKeyID, "aws-access-key-id", "", "(required) AWS access key id")
 	flag.UintVar(&cfg.flTimeout, "timeout", 2, "(optional) timeout (default 2s)")
 	flag.StringVar(&cfg.flAWSSessionName, "aws-session-name", fmt.Sprintf("gcp-%s", uuid.New().String()), "AWS SessionName")
+	flag.StringVar(&cfg.flTPMSessionPublicName, "tpm-session-encrypt-with-name", "", "hex encoded TPM object 'name' to use with an encrypted session")
 
 	flag.Parse()
 
@@ -159,9 +162,44 @@ func main() {
 
 	rwr := transport.FromReadWriter(rwc)
 
+	// first check if we should use session encryption with the TPM
+	// if the "name" object is specified, we will use the EK RSAEKTemplate and compare what its 'name' against a  known value
+	sess := tpm2.HMAC(tpm2.TPMAlgSHA256, 16, tpm2.AESEncryption(128, tpm2.EncryptOut))
+
+	var encryptionSessionHandle tpm2.TPMHandle
+	var encryptionPub *tpm2.TPMTPublic
+	if cfg.flTPMSessionPublicName != "" {
+		createEKRsp, err := tpm2.CreatePrimary{
+			PrimaryHandle: tpm2.TPMRHEndorsement,
+			InPublic:      tpm2.New2B(tpm2.RSAEKTemplate),
+		}.Execute(rwr, sess)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error creating EK Primary  %v", err)
+			os.Exit(1)
+		}
+		defer func() {
+			flushContextCmd := tpm2.FlushContext{
+				FlushHandle: createEKRsp.ObjectHandle,
+			}
+			_, _ = flushContextCmd.Execute(rwr)
+		}()
+
+		encryptionPub, err = createEKRsp.OutPublic.Contents()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error getting session encryption public contents %v", err)
+			os.Exit(1)
+		}
+
+		if cfg.flTPMSessionPublicName != hex.EncodeToString(createEKRsp.Name.Buffer) {
+			fmt.Fprintf(os.Stderr, "session encryption names do not match expected [%s] got [%s]", cfg.flTPMSessionPublicName, hex.EncodeToString(createEKRsp.Name.Buffer))
+			os.Exit(1)
+		}
+	}
+
 	var keyHandle tpm2.TPMHandle
 
 	if cfg.flPersistentHandle != 0 {
+
 		keyHandle = tpm2.TPMHandle(cfg.flPersistentHandle)
 	} else if cfg.flCredentialFile == "" {
 
@@ -186,6 +224,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "aws-tpm-process-credential: error creating H2 primary key %v", err)
 			os.Exit(1)
 		}
+
 		// now the actual key can get loaded from that parent
 		hmacKey, err := tpm2.Load{
 			ParentHandle: tpm2.AuthHandle{
@@ -196,7 +235,6 @@ func main() {
 			InPublic:  key.Pubkey,
 			InPrivate: key.Privkey,
 		}.Execute(rwr)
-
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "aws-tpm-process-credential: error loading hmac key %v", err)
 			os.Exit(1)
@@ -208,7 +246,6 @@ func main() {
 			_, _ = flushContextCmd.Execute(rwr)
 		}()
 		keyHandle = hmacKey.ObjectHandle
-
 	} else {
 		fmt.Fprintf(os.Stderr, "aws-tpm-process-credential: either -credential-file or persistentHandle")
 		os.Exit(1)
@@ -230,6 +267,8 @@ func main() {
 				Name:   pub.Name,
 				Auth:   tpm2.PasswordAuth(nil),
 			},
+			EncryptionHandle: encryptionSessionHandle,
+			EncryptionPub:    encryptionPub,
 		},
 		AccessKeyID: cfg.flAWSAccessKeyID,
 	})
