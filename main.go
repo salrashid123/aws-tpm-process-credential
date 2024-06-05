@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"strconv"
 	"time"
 
 	"fmt"
@@ -38,7 +39,9 @@ type processCredentialsResponse struct {
 }
 
 const (
-	RFC3339 = "2006-01-02T15:04:05Z07:00"
+	RFC3339         = "2006-01-02T15:04:05Z07:00"
+	PARENT_PASS_VAR = "TPM_PARENT_AUTH"
+	KEY_PASS_VAR    = "TPM_KEY_AUTH"
 )
 
 type credConfig struct {
@@ -53,6 +56,9 @@ type credConfig struct {
 	flAWSSessionName       string
 	flAssumeRole           bool
 	flTPMSessionPublicName string
+	flParentpass           string
+	flKeypass              string
+	flPcrs                 string
 }
 
 var (
@@ -120,6 +126,9 @@ func main() {
 	flag.UintVar(&cfg.flTimeout, "timeout", 2, "(optional) timeout (default 2s)")
 	flag.StringVar(&cfg.flAWSSessionName, "aws-session-name", fmt.Sprintf("gcp-%s", uuid.New().String()), "AWS SessionName")
 	flag.StringVar(&cfg.flTPMSessionPublicName, "tpm-session-encrypt-with-name", "", "hex encoded TPM object 'name' to use with an encrypted session")
+	flag.StringVar(&cfg.flParentpass, "parentPass", "", "Passphrase for the key handle (will use TPM_KEY_AUTH env var)")
+	flag.StringVar(&cfg.flKeypass, "keyPass", "", "Passphrase for the key handle (will use TPM_KEY_AUTH env var)")
+	flag.StringVar(&cfg.flPcrs, "pcrs", "", "PCR Bound value (increasing order, comma separated)")
 
 	flag.Parse()
 
@@ -164,7 +173,7 @@ func main() {
 
 	// first check if we should use session encryption with the TPM
 	// if the "name" object is specified, we will use the EK RSAEKTemplate and compare what its 'name' against a  known value
-	sess := tpm2.HMAC(tpm2.TPMAlgSHA256, 16, tpm2.AESEncryption(128, tpm2.EncryptOut))
+	encsess := tpm2.HMAC(tpm2.TPMAlgSHA256, 16, tpm2.AESEncryption(128, tpm2.EncryptOut))
 
 	var encryptionSessionHandle tpm2.TPMHandle
 	var encryptionPub *tpm2.TPMTPublic
@@ -172,7 +181,7 @@ func main() {
 		createEKRsp, err := tpm2.CreatePrimary{
 			PrimaryHandle: tpm2.TPMRHEndorsement,
 			InPublic:      tpm2.New2B(tpm2.RSAEKTemplate),
-		}.Execute(rwr, sess)
+		}.Execute(rwr, encsess)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error creating EK Primary  %v", err)
 			os.Exit(1)
@@ -198,10 +207,10 @@ func main() {
 
 	var keyHandle tpm2.TPMHandle
 
-	if cfg.flPersistentHandle != 0 {
+	parentPasswordAuth := getEnv(PARENT_PASS_VAR, "", cfg.flParentpass)
+	keyPasswordAuth := getEnv(KEY_PASS_VAR, "", cfg.flKeypass)
 
-		keyHandle = tpm2.TPMHandle(cfg.flPersistentHandle)
-	} else if cfg.flCredentialFile == "" {
+	if cfg.flCredentialFile != "" {
 
 		c, err := os.ReadFile(cfg.flCredentialFile)
 		if err != nil {
@@ -224,13 +233,19 @@ func main() {
 			fmt.Fprintf(os.Stderr, "aws-tpm-process-credential: error creating H2 primary key %v", err)
 			os.Exit(1)
 		}
+		defer func() {
+			flushContextCmd := tpm2.FlushContext{
+				FlushHandle: primaryKey.ObjectHandle,
+			}
+			_, _ = flushContextCmd.Execute(rwr)
+		}()
 
 		// now the actual key can get loaded from that parent
 		hmacKey, err := tpm2.Load{
 			ParentHandle: tpm2.AuthHandle{
 				Handle: primaryKey.ObjectHandle,
 				Name:   tpm2.TPM2BName(primaryKey.Name),
-				Auth:   tpm2.PasswordAuth([]byte("")),
+				Auth:   tpm2.PasswordAuth([]byte(parentPasswordAuth)),
 			},
 			InPublic:  key.Pubkey,
 			InPrivate: key.Privkey,
@@ -246,6 +261,8 @@ func main() {
 			_, _ = flushContextCmd.Execute(rwr)
 		}()
 		keyHandle = hmacKey.ObjectHandle
+	} else if cfg.flPersistentHandle != 0 {
+		keyHandle = tpm2.TPMHandle(cfg.flPersistentHandle)
 	} else {
 		fmt.Fprintf(os.Stderr, "aws-tpm-process-credential: either -credential-file or persistentHandle")
 		os.Exit(1)
@@ -259,14 +276,74 @@ func main() {
 		os.Exit(1)
 	}
 
+	var sess tpm2.Session
+
+	if cfg.flPcrs != "" {
+		strpcrs := strings.Split(cfg.flPcrs, ",")
+		var pcrList = []uint{}
+
+		for _, i := range strpcrs {
+			j, err := strconv.Atoi(i)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "ERROR:  could convert pcr value: %v", err)
+				os.Exit(1)
+			}
+			pcrList = append(pcrList, uint(j))
+		}
+
+		var cleanup func() error
+		sess, cleanup, err = tpm2.PolicySession(rwr, tpm2.TPMAlgSHA256, 16)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR:  could not get PolicySession: %v", err)
+			os.Exit(1)
+		}
+		defer cleanup()
+
+		selection := tpm2.TPMLPCRSelection{
+			PCRSelections: []tpm2.TPMSPCRSelection{
+				{
+					Hash:      tpm2.TPMAlgSHA256,
+					PCRSelect: tpm2.PCClientCompatible.PCRs(pcrList...),
+				},
+			},
+		}
+
+		expectedDigest, err := getExpectedPCRDigest(rwr, selection, tpm2.TPMAlgSHA256)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERROR:  could not get PolicySession: %v", err)
+			os.Exit(1)
+		}
+		_, err = tpm2.PolicyPCR{
+			PolicySession: sess.Handle(),
+			Pcrs:          selection,
+			PcrDigest: tpm2.TPM2BDigest{
+				Buffer: expectedDigest,
+			},
+		}.Execute(rwr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Unable to create policyPCR: %v", err)
+			os.Exit(1)
+		}
+	} else {
+		sess = tpm2.PasswordAuth([]byte(keyPasswordAuth))
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR:  could not initialize Key: %v", err)
+		os.Exit(1)
+	}
+
+	objAuth := &tpm2.TPM2BAuth{
+		Buffer: []byte(keyPasswordAuth),
+	}
+
 	tpmSigner, err := hmacsigner.NewTPMSigner(&hmacsigner.TPMSignerConfig{
 		TPMConfig: hmacsigner.TPMConfig{
-			TPMDevice: rwc,
-			AuthHandle: tpm2.AuthHandle{
-				Handle: keyHandle,
-				Name:   pub.Name,
-				Auth:   tpm2.PasswordAuth(nil),
-			},
+			TPMDevice:        rwc,
+			ObjectHandle:     keyHandle,
+			ObjectName:       pub.Name,
+			ObjectAuth:       *objAuth,
+			Session:          sess,
 			EncryptionHandle: encryptionSessionHandle,
 			EncryptionPub:    encryptionPub,
 		},
@@ -298,7 +375,7 @@ func main() {
 
 		hc, err = hmaccred.NewAWSTPMCredentials(hmaccred.TPMProvider{
 			GetSessionTokenInput: &sts.GetSessionTokenInput{
-				DurationSeconds: aws.Int32(3600),
+				DurationSeconds: aws.Int32(int32(cfg.flDuration)),
 			},
 			Version:   "2011-06-15",
 			Region:    cfg.flAWSRegion,
@@ -332,4 +409,39 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Println(string(m))
+}
+
+func getEnv(key, fallback string, fromArg string) string {
+	if fromArg != "" {
+		return fromArg
+	}
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
+
+func getExpectedPCRDigest(thetpm transport.TPM, selection tpm2.TPMLPCRSelection, hashAlg tpm2.TPMAlgID) ([]byte, error) {
+	pcrRead := tpm2.PCRRead{
+		PCRSelectionIn: selection,
+	}
+
+	pcrReadRsp, err := pcrRead.Execute(thetpm)
+	if err != nil {
+		return nil, err
+	}
+
+	var expectedVal []byte
+	for _, digest := range pcrReadRsp.PCRValues.Digests {
+		expectedVal = append(expectedVal, digest.Buffer...)
+	}
+
+	cryptoHashAlg, err := hashAlg.Hash()
+	if err != nil {
+		return nil, err
+	}
+
+	hash := cryptoHashAlg.New()
+	hash.Write(expectedVal)
+	return hash.Sum(nil), nil
 }

@@ -23,18 +23,62 @@ If you're curious how all this works, see
 
 ---
 
+### Configuration Options
+
+You can set the following options on usage:
+
+| Option | Description |
+|:------------|-------------|
+| **`--tpm-path`** | path to the TPM device (default: `/dev/tpm0`) |
+| **`--aws-access-key-id`** | (required) The value for `AWS_ACCESS_KEY_ID`  |
+| **`--persistentHandle`** | Persistent Handle for the HMAC key (default: `0x81008003`) |
+| **`--credential-file`** | Path to the TPM HMAC credential file (default: ``) |
+| **`--keypass`** | Passphrase for the key handle (will use TPM_KEY_AUTH env var) |
+| **`--parentPass`** | Passphrase for the key handle (will use TPM_KEY_AUTH env var) |
+| **`--pcrs`** | PCR Bound value (increasing order, comma separated) |
+| **`--aws-arn`** | AWS ARN value to use (default: ``) |
+| **`--aws-session-name`** | Session Name to use (default: ``) |
+| **`--aws-region`** | AWS Region to use (default: ``) |
+| **`--assumeRole`** | Boolean flag to switch the token type returned (default: `false`) |
+| **`--duration`** | Lifetime for the AWS token (default: `3600s`) |
+| **`--timeout`** | Timeout waiting for HMAC signature from the TPM (default: `2s`) |
+| **`--tpm-session-encrypt-with-name`** | hex encoded TPM object 'name' to use with an encrypted session |
+
+
 ### Setup
 
 On a system which has the TPM, [install go](https://go.dev/doc/install), then run the following which seals the key to `persistentHandle`
+
 ```bash
 $ export AWS_ACCESS_KEY_ID=AKIAUH3H6EGK-redacted
 $ export AWS_SECRET_ACCESS_KEY=--redacted--
 
-$ git clone https://github.com/salrashid123/aws_hmac.git
-$ cd aws_hmac/example/tpm
-$ go run create/main.go --accessKeyID $AWS_ACCESS_KEY_ID \
-   --secretAccessKey $AWS_SECRET_ACCESS_KEY \
-   --persistentHandle=0x81008003 --out=private.pem
+## add the AWS4 prefix to the raw hmac secret access key prior to import
+export secret="AWS4$AWS_SECRET_ACCESS_KEY"
+echo -n $secret > hmac.key
+hexkey=$(xxd -p -c 256 < hmac.key)
+
+## create the primary
+### the specific primary here happens to be the h2 template described later on but you are free to define any template and policy
+### this is the "H2" profile from https://www.hansenpartnership.com/draft-bottomley-tpm2-keys.html#name-parent
+printf '\x00\x00' > unique.dat
+tpm2_createprimary -C o -G ecc  -g sha256  -c primary.ctx -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u unique.dat
+
+tpm2_import -C primary.ctx -G hmac -i hmac.key -u hmac.pub -r hmac.priv 
+tpm2_load -C primary.ctx -u hmac.pub -r hmac.priv -c hmac.ctx 
+
+tpm2_evictcontrol -C o -c hmac.ctx 0x81010002
+
+# nif you have tpm2-tss openssl installed,
+// export the keys using  https://github.com/tpm2-software/tpm2-tss-engine/blob/master/man/tpm2tss-genkey.1.md
+tpm2tss-genkey -u hmac.pub -r hmac.priv private.pem
+
+## or golang:
+# $ git clone https://github.com/salrashid123/aws_hmac.git
+# $ cd aws_hmac/example/tpm
+# $ go run create/main.go --accessKeyID $AWS_ACCESS_KEY_ID \
+#    --secretAccessKey $AWS_SECRET_ACCESS_KEY \
+#    --persistentHandle=0x81010002 --out=private.pem
 ```
 
 At this point the hmac key is saved to *both* a persistent handle and an encrypted representation as PEM (see [tpm2 primary key for (eg TCG EK Credential Profile H-2 profile](https://gist.github.com/salrashid123/9822b151ebb66f4083c5f71fd4cdbe40))
@@ -52,23 +96,22 @@ nwb+VkA=
 
 You can use either way.  With files you can dynamically specify the credentials to use while with persistent handles, you need to load them first and have limited ability capacity.
 
-### Configuration Options
+To run this directly
 
-You can set the following options on usage:
+```bash
 
-| Option | Description |
-|:------------|-------------|
-| **`--tpm-path`** | path to the TPM device (default: `/dev/tpm0`) |
-| **`--aws-access-key-id`** | (required) The value for `AWS_ACCESS_KEY_ID`  |
-| **`--persistentHandle`** | Persistent Handle for the HMAC key (default: `0x81008003`) |
-| **`--credential-file`** | Path to the TPM HMAC credential file (default: ``) |
-| **`--aws-arn`** | AWS ARN value to use (default: ``) |
-| **`--aws-session-name`** | Session Name to use (default: ``) |
-| **`--aws-region`** | AWS Region to use (default: ``) |
-| **`--assumeRole`** | Boolean flag to switch the token type returned (default: `false`) |
-| **`--duration`** | Lifetime for the AWS token (default: `3600s`) |
-| **`--timeout`** | Timeout waiting for HMAC signature from the TPM (default: `2s`) |
+go build -o aws-tpm-process-credential main.go
 
+## using persistent handle
+./aws-tpm-process-credential  --aws-region=us-east-1 \
+    --aws-session-name=mysession --assumeRole=false --persistentHandle=0x81010002 \
+    --aws-access-key-id=$AWS_ACCESS_KEY_ID  --duration=3600
+
+# using encrypted file
+./aws-tpm-process-credential  --aws-region=us-east-1 \
+    --aws-session-name=mysession --assumeRole=false --credential-file=/path/to/private.pem \
+    --aws-access-key-id=$AWS_ACCESS_KEY_ID  --duration=3600    
+```
 
 ### Configure AWS Process Credential Profiles
 
@@ -82,12 +125,13 @@ This repo will assume a role  `"arn:aws:iam::291738886548:user/svcacct1"` has ac
 Edit  `~/.aws/config` and set the process credential parameters 
 
 if you want to use `persistentHandle`:
+
 ```conf
 [profile sessiontoken]
-credential_process = /path/to/aws-tpm-process-credential  --aws-region=us-east-1 --aws-session-name=mysession --assumeRole=false --persistentHandle=0x81008003 --aws-access-key-id=AKIAUH3H6EGK-redacted  --duration=3600
+credential_process = /path/to/aws-tpm-process-credential  --aws-region=us-east-1 --aws-session-name=mysession --assumeRole=false --persistentHandle=0x81010002 --aws-access-key-id=AKIAUH3H6EGK-redacted  --duration=3600
 
 [profile assumerole]
-credential_process = /path/to/aws-tpm-process-credential  --aws-arn="arn:aws:iam::291738886548:role/gcpsts" --aws-region=us-east-1 --aws-session-name=mysession --assumeRole=true --persistentHandle=0x81008003 --aws-access-key-id=AKIAUH3H6EGK-redacted  --duration=3600 
+credential_process = /path/to/aws-tpm-process-credential  --aws-arn="arn:aws:iam::291738886548:role/gcpsts" --aws-region=us-east-1 --aws-session-name=mysession --assumeRole=true --persistentHandle=0x81010002 --aws-access-key-id=AKIAUH3H6EGK-redacted  --duration=3600 
 ```
 
 or credential file:
@@ -106,8 +150,8 @@ credential_process = /path/to/aws-tpm-process-credential  --aws-arn="arn:aws:iam
 To verify `AssumeRole` first just run `aws-tpm-process-credential` directly
 
 ```bash
-$ sudo /path/to/aws-tpm-process-credential \
-   --aws-arn="arn:aws:iam::291738886548:role/gcpsts" --aws-region=us-east-1 --aws-session-name=mysession --assumeRole=true --persistentHandle=0x81008003 --aws-access-key-id=$AWS_ACCESS_KEY_ID  --duration=3600 
+$ /path/to/aws-tpm-process-credential \
+   --aws-arn="arn:aws:iam::291738886548:role/gcpsts" --aws-region=us-east-1 --aws-session-name=mysession --assumeRole=true --persistentHandle=0x81010002 --aws-access-key-id=$AWS_ACCESS_KEY_ID  --duration=3600 
 
 {
   "Version": 1,
@@ -140,7 +184,7 @@ To verify the session token, first just run `aws-tpm-process-credential` directl
 
 ```bash
 $  sudo /path/to/aws-tpm-process-credential \
-    --aws-region=us-east-1 --aws-session-name=mysession --assumeRole=false --persistentHandle=0x81008003 --aws-access-key-id=$AWS_ACCESS_KEY_ID  --duration=3600
+    --aws-region=us-east-1 --aws-session-name=mysession --assumeRole=false --persistentHandle=0x81010002 --aws-access-key-id=$AWS_ACCESS_KEY_ID  --duration=3600
 
 {
   "Version": 1,
@@ -169,43 +213,86 @@ $ aws s3 ls mineral-minutia --region us-east-2 --profile sessiontoken
 
 ---
 
-
 ### Encrypted KeyFile format
 
 The TPM encrypted file is not decodable in userspace (it must be used inside the TPM by the TPM).  The default format used here is compatible with openssl as described in [ASN.1 Specification for TPM 2.0 Key Files](https://www.hansenpartnership.com/draft-bottomley-tpm2-keys.html#name-parent)  where the template h-2 is described in pg 43 [TCG EK Credential Profile](https://trustedcomputinggroup.org/wp-content/uploads/TCG_IWG_EKCredentialProfile_v2p4_r2_10feb2021.pdf)
 
 Of course the encrypted key can **ONLY** be used ont that TPM.
 
-### Using TPM2_Tools
 
-You can also import the hmac key using `tpm2_tools` and write it to an encrypted file
+### PCR Policy
+
+If you want to setup access to the key using a TPM PCR policy (eg, pcr values you specified during key creation must be met during signing), then configure it first during key creation:
+
+
+In the following PCR 23 is used:
 
 ```bash
 export secret="AWS4$AWS_SECRET_ACCESS_KEY"
 echo -n $secret > hmac.key
 hexkey=$(xxd -p -c 256 < hmac.key)
 
-## this is the "H2" profile from https://www.hansenpartnership.com/draft-bottomley-tpm2-keys.html#name-parent
+tpm2_startauthsession -S session.dat
+tpm2_policypcr -S session.dat -l sha256:23  -L policy.dat
+tpm2_flushcontext session.dat
+
 printf '\x00\x00' > unique.dat
 tpm2_createprimary -C o -G ecc  -g sha256  -c primary.ctx -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u unique.dat
 
-tpm2_import -C primary.ctx -G hmac -i hmac.key -u hmac.pub -r hmac.priv 
+tpm2_import -C primary.ctx -G hmac -i hmac.key -u hmac.pub -r hmac.priv -L policy.dat
 tpm2_load -C primary.ctx -u hmac.pub -r hmac.priv -c hmac.ctx 
 
-echo -n "foo" > hmac_input.txt 
-tpm2_hmac -g sha256 -c hmac.ctx hmac_input.txt | xxd -p -c 256
-
-# now export the keys using  https://github.com/tpm2-software/tpm2-tss-engine/blob/master/man/tpm2tss-genkey.1.md
-tpm2tss-genkey -u key.pub -r key.priv private.pem
+tpm2_evictcontrol -C o -c hmac.ctx 0x81010003
+# tpm2tss-genkey -u hmac.pub -r hmac.priv private.pem
 ```
 
-### Session Auth
 
-This provide does not support any authorization policies you may have (eg [hmac with pcr policy](https://gist.github.com/salrashid123/9ee5e02d5991c8d53717bd9a179a65b0)).  
+And then again by passing through the `--pcrs=` parameter
 
-This is a todo where we need to initialize an appropriate `tpm2.AuthHandle` with the sessions setup.  if you need something like this, LMK
+```bash
+./aws-tpm-process-credential \
+ --aws-arn="arn:aws:iam::291738886548:role/gcpsts" --aws-region=us-east-1 \
+  --aws-session-name=mysession --assumeRole=true --persistentHandle=0x81010003 \ --aws-access-key-id=$AWS_ACCESS_KEY_ID  --duration=3600 --pcrs=23
+```
 
-The same applies to the owner-auth (eg, it assumes no parent password is required...again, this could be just an enhancement if there is demand)
+ofcourse if you alter the value, the key can't be used for signing again
+
+```bash
+$ tpm2_pcrread sha256:23
+  sha256:
+    23: 0xC78009FDF07FC56A11F122370658A353AAA542ED63E44C4BC15FF4CD105AB33C
+
+$ tpm2_pcrextend 23:sha256=0xC78009FDF07FC56A11F122370658A353AAA542ED63E44C4BC15FF4CD105AB33C
+```
+
+### Password Policy
+
+If you want to setup access to the key using a TPM Password policy (eg, you have to supply a passphrase first), then configure it first during key creation:
+
+```bash
+export passphrase="testpwd"
+export secret="AWS4$AWS_SECRET_ACCESS_KEY"
+echo -n $secret > hmac.key
+hexkey=$(xxd -p -c 256 < hmac.key)
+
+printf '\x00\x00' > unique.dat
+tpm2_createprimary -C o -G ecc  -g sha256  -c primary.ctx -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u unique.dat
+
+tpm2_import -C primary.ctx -G hmac -i hmac.key -u hmac.pub -r hmac.priv -p $passphrase
+tpm2_load -C primary.ctx -u hmac.pub -r hmac.priv -c hmac.ctx 
+
+tpm2_evictcontrol -C o -c hmac.ctx 0x81010004
+# tpm2tss-genkey -u hmac.pub -r hmac.priv private.pem
+```
+
+And then again by passing through the `--keyPass=` parameter
+
+```bash
+./aws-tpm-process-credential \
+ --aws-arn="arn:aws:iam::291738886548:role/gcpsts" --aws-region=us-east-1 \
+  --aws-session-name=mysession --assumeRole=true --persistentHandle=0x81010004 \ --aws-access-key-id=$AWS_ACCESS_KEY_ID  --duration=3600 --keyPass=$passphrase
+```
+
 
 ### Encrypted TPM Sessions
 
