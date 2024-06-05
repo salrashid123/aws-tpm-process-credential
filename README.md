@@ -4,11 +4,11 @@ AWS [Process Credential](https://docs.aws.amazon.com/cli/latest/userguide/cli-co
 
 Use the binary as a way to use aws cli and any sdk library where after setup, you don't actually need to know the _source_ AWS_SECRET_ACCESS_KEY. 
 
-To use this, you need to save the AWS_SECRET_ACCESS_KEY into the TPM:
+To use this, you need to save the `AWS_SECRET_ACCESS_KEY` into the TPM:
 
 1. Directly load `AWS_SECRET_ACCESS_KEY` 
 
-   With this, you "load" the AWS_SECRET_ACCESS_KEY into a TPM's [persistentHandle](https://trustedcomputinggroup.org/wp-content/uploads/RegistryOfReservedTPM2HandlesAndLocalities_v1p1_pub.pdf) or a TPM encrypted PEM  that it can only be used on that TPM alone. 
+   With this, you "load" the `AWS_SECRET_ACCESS_KEY` into a TPM's [persistentHandle](https://trustedcomputinggroup.org/wp-content/uploads/RegistryOfReservedTPM2HandlesAndLocalities_v1p1_pub.pdf) or a TPM encrypted PEM  that it can only be used on that TPM alone. 
 
 2. Securely Transfer `AWS_SECRET_ACCESS_KEY` from one hose to another
 
@@ -70,7 +70,7 @@ tpm2_load -C primary.ctx -u hmac.pub -r hmac.priv -c hmac.ctx
 tpm2_evictcontrol -C o -c hmac.ctx 0x81010002
 
 # nif you have tpm2-tss openssl installed,
-// export the keys using  https://github.com/tpm2-software/tpm2-tss-engine/blob/master/man/tpm2tss-genkey.1.md
+## export the keys using  https://github.com/tpm2-software/tpm2-tss-engine/blob/master/man/tpm2tss-genkey.1.md
 tpm2tss-genkey -u hmac.pub -r hmac.priv private.pem
 
 ## or golang:
