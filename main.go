@@ -276,7 +276,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	var sess tpm2.Session
+	var sess hmacsigner.Session
 
 	if cfg.flPcrs != "" {
 		strpcrs := strings.Split(cfg.flPcrs, ",")
@@ -291,14 +291,6 @@ func main() {
 			pcrList = append(pcrList, uint(j))
 		}
 
-		var cleanup func() error
-		sess, cleanup, err = tpm2.PolicySession(rwr, tpm2.TPMAlgSHA256, 16)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERROR:  could not get PolicySession: %v", err)
-			os.Exit(1)
-		}
-		defer cleanup()
-
 		selection := tpm2.TPMLPCRSelection{
 			PCRSelections: []tpm2.TPMSPCRSelection{
 				{
@@ -308,42 +300,33 @@ func main() {
 			},
 		}
 
-		expectedDigest, err := getExpectedPCRDigest(rwr, selection, tpm2.TPMAlgSHA256)
+		// expectedDigest, err := getExpectedPCRDigest(rwr, selection, tpm2.TPMAlgSHA256)
+		// if err != nil {
+		// 	fmt.Fprintf(os.Stderr, "ERROR:  could not get PolicySession: %v", err)
+		// 	os.Exit(1)
+		// }
+		sess, err = hmacsigner.NewPCRSession(rwr, selection.PCRSelections)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "ERROR:  could not get PolicySession: %v", err)
 			os.Exit(1)
 		}
-		_, err = tpm2.PolicyPCR{
-			PolicySession: sess.Handle(),
-			Pcrs:          selection,
-			PcrDigest: tpm2.TPM2BDigest{
-				Buffer: expectedDigest,
-			},
-		}.Execute(rwr)
+	} else if keyPasswordAuth != "" {
+		sess, err = hmacsigner.NewPasswordSession(rwr, []byte(keyPasswordAuth))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Unable to create policyPCR: %v", err)
+			fmt.Fprintf(os.Stderr, "ERROR:  could not get PolicySession: %v", err)
 			os.Exit(1)
 		}
-	} else {
-		sess = tpm2.PasswordAuth([]byte(keyPasswordAuth))
-	}
-
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR:  could not initialize Key: %v", err)
-		os.Exit(1)
-	}
-
-	objAuth := &tpm2.TPM2BAuth{
-		Buffer: []byte(keyPasswordAuth),
 	}
 
 	tpmSigner, err := hmacsigner.NewTPMSigner(&hmacsigner.TPMSignerConfig{
 		TPMConfig: hmacsigner.TPMConfig{
-			TPMDevice:        rwc,
-			ObjectHandle:     keyHandle,
-			ObjectName:       pub.Name,
-			ObjectAuth:       *objAuth,
-			Session:          sess,
+			TPMDevice: rwc,
+			NamedHandle: tpm2.NamedHandle{
+				Handle: keyHandle,
+				Name:   pub.Name,
+			},
+			AuthSession: sess,
+
 			EncryptionHandle: encryptionSessionHandle,
 			EncryptionPub:    encryptionPub,
 		},

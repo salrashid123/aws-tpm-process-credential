@@ -252,7 +252,8 @@ And then again by passing through the `--pcrs=` parameter
 ```bash
 ./aws-tpm-process-credential \
  --aws-arn="arn:aws:iam::291738886548:role/gcpsts" --aws-region=us-east-1 \
-  --aws-session-name=mysession --assumeRole=true --persistentHandle=0x81010003 \ --aws-access-key-id=$AWS_ACCESS_KEY_ID  --duration=3600 --pcrs=23
+   --aws-session-name=mysession --assumeRole=true --persistentHandle=0x81010003 \
+    --aws-access-key-id=$AWS_ACCESS_KEY_ID  --duration=3600 --pcrs=23
 ```
 
 ofcourse if you alter the value, the key can't be used for signing again
@@ -290,9 +291,11 @@ And then again by passing through the `--keyPass=` parameter
 ```bash
 ./aws-tpm-process-credential \
  --aws-arn="arn:aws:iam::291738886548:role/gcpsts" --aws-region=us-east-1 \
-  --aws-session-name=mysession --assumeRole=true --persistentHandle=0x81010004 \ --aws-access-key-id=$AWS_ACCESS_KEY_ID  --duration=3600 --keyPass=$passphrase
+  --aws-session-name=mysession --assumeRole=true --persistentHandle=0x81010004 \
+  --aws-access-key-id=$AWS_ACCESS_KEY_ID  --duration=3600 --keyPass=$passphrase
 ```
 
+If you want to create a custom policy, you need to modify the code as described [here](https://github.com/salrashid123/aws_hmac/blob/main/example/tpm/README.md#pcr-policy)
 
 ### Encrypted TPM Sessions
 
