@@ -318,6 +318,10 @@ For example:
    --tpm-session-encrypt-with-name=000bb50d34f6377bb3c2f41a1b4b6094ed6efcd7032d28054566db0766879dad1ee0
 ```
 
+You can also derive the "name" from a public key of a known template:
+
+see [go-tpm.tpm2_get_name](https://github.com/salrashid123/tpm2/tree/master/tpm2_get_name)
+
 #### References
 
 - [TPM Credential Source for Google Cloud SDK](https://github.com/salrashid123/gcp-adc-tpm)
