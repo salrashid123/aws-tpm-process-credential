@@ -21,9 +21,11 @@ builds:
       - v1
     goarm:
       - 7
+    env:
+      - CGO_ENABLED=0      
     binary: aws-tpm-process-credential
     builder: go
-    tool: 'go1.24.0'
+    tool: 'go'
     command: build
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}} -X main.builtBy=goreleaser
