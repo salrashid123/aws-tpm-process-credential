@@ -50,9 +50,6 @@ You can set the following options on usage:
 On a system which has the TPM, [install go](https://go.dev/doc/install), then run the following which seals the key to `persistentHandle`
 
 ```bash
-$ export AWS_ACCESS_KEY_ID=AKIAUH3H6EGK-redacted
-$ export AWS_SECRET_ACCESS_KEY=--redacted--
-
 ## add the AWS4 prefix to the raw hmac secret access key prior to import
 export secret="AWS4$AWS_SECRET_ACCESS_KEY"
 echo -n $secret > hmac.key
@@ -65,13 +62,13 @@ printf '\x00\x00' > unique.dat
 tpm2_createprimary -C o -G ecc  -g sha256  -c primary.ctx -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|noda|restricted|decrypt" -u unique.dat
 
 tpm2_import -C primary.ctx -G hmac -i hmac.key -u hmac.pub -r hmac.priv 
+tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
 tpm2_load -C primary.ctx -u hmac.pub -r hmac.priv -c hmac.ctx 
 
-tpm2_evictcontrol -C o -c hmac.ctx 0x81010002
+## either create a persistent handle or encode into a PEM file
+# tpm2_evictcontrol -C o -c hmac.ctx 0x81010002
 
-# nif you have tpm2-tss openssl installed,
-## export the keys using  https://github.com/tpm2-software/tpm2-tss-engine/blob/master/man/tpm2tss-genkey.1.md
-tpm2tss-genkey -u hmac.pub -r hmac.priv private.pem
+tpm2_encodeobject -C primary.ctx -u hmac.pub -r  hmac.priv -o private.pem
 
 ## or golang:
 # $ git clone https://github.com/salrashid123/aws_hmac.git
@@ -100,7 +97,7 @@ To run this directly
 
 ```bash
 
-go build -o aws-tpm-process-credential main.go
+go build -o aws-tpm-process-credential cmd/main.go
 
 ## using persistent handle
 ./aws-tpm-process-credential  --aws-region=us-east-1 \
@@ -242,10 +239,10 @@ tpm2_createprimary -C o -G ecc  -g sha256  -c primary.ctx -a "fixedtpm|fixedpare
 tpm2_import -C primary.ctx -G hmac -i hmac.key -u hmac.pub -r hmac.priv -L policy.dat
 tpm2_load -C primary.ctx -u hmac.pub -r hmac.priv -c hmac.ctx 
 
+## either use persistent handle or PEM file
 tpm2_evictcontrol -C o -c hmac.ctx 0x81010003
-# tpm2tss-genkey -u hmac.pub -r hmac.priv private.pem
+tpm2_encodeobject -C primary.ctx -u hmac.pub -r  hmac.priv -o private.pem
 ```
-
 
 And then again by passing through the `--pcrs=` parameter
 
@@ -282,8 +279,9 @@ tpm2_createprimary -C o -G ecc  -g sha256  -c primary.ctx -a "fixedtpm|fixedpare
 tpm2_import -C primary.ctx -G hmac -i hmac.key -u hmac.pub -r hmac.priv -p $passphrase
 tpm2_load -C primary.ctx -u hmac.pub -r hmac.priv -c hmac.ctx 
 
+## either use persistent handle or PEM file
 tpm2_evictcontrol -C o -c hmac.ctx 0x81010004
-# tpm2tss-genkey -u hmac.pub -r hmac.priv private.pem
+tpm2_encodeobject -C primary.ctx -u hmac.pub -r  hmac.priv -o private.pem
 ```
 
 And then again by passing through the `--keyPass=` parameter
@@ -296,6 +294,54 @@ And then again by passing through the `--keyPass=` parameter
 ```
 
 If you want to create a custom policy, you need to modify the code as described [here](https://github.com/salrashid123/aws_hmac/blob/main/example/tpm/README.md#pcr-policy)
+
+
+### SoftwareTPM
+
+If you just want to test this with a software TPM:
+
+```bash
+## Initialize TPM-A
+rm -rf /tmp/myvtpm && mkdir /tmp/myvtpm
+sudo swtpm_setup --tpmstate /tmp/myvtpm --tpm2 --create-ek-cert
+sudo swtpm socket --tpmstate dir=/tmp/myvtpm --tpm2 --server type=tcp,port=2321 --ctrl type=tcp,port=2322 --flags not-need-init,startup-clear
+
+export TPM2TOOLS_TCTI="swtpm:port=2321"
+tpm2_pcrread sha256:0,23
+```
+
+#### Verify Release Binary
+
+If you download a binary from the "Releases" page, you can verify the signature with GPG:
+
+```bash
+gpg --keyserver keys.openpgp.org --recv-keys 3FCD7ECFB7345F2A98F9F346285AEDB3D5B5EF74
+
+export VERSION=0.0.7
+## to verify the checksum file for a given release:
+wget https://github.com/salrashid123/aws-tpm-process-credential/releases/download/v$VERSION/aws-tpm-process-credential_$VERSION_checksums.txt
+wget https://github.com/salrashid123/aws-tpm-process-credential/releases/download/v$VERSION/aws-tpm-process-credential_$VERSION_checksums.txt.sig
+
+gpg --verify aws-tpm-process-credential_$VERSION_checksums.txt.sig aws-tpm-process-credential_$VERSION_checksums.txt
+```
+
+#### Verify Release Binary with github Attestation
+
+You can also verify the binary using [github attestation](https://github.blog/news-insights/product-news/introducing-artifact-attestations-now-in-public-beta/)
+
+For example, the attestation for releases `[@refs/tags/v0.0.7]` can be found at
+
+* [https://github.com/salrashid123/aws-tpm-process-credential/attestations](https://github.com/salrashid123/aws-tpm-process-credential/attestations)
+
+Then to verify:
+
+```bash
+$ export VERSION=0.0.7
+$ wget https://github.com/salrashid123/aws-tpm-process-credential/releases/download/v$VERSION/aws-tpm-process-credential_$VERSION_linux_amd64
+$ wget https://github.com/salrashid123/aws-tpm-process-credential/attestations/4853131/download -O salrashid123-aws-tpm-process-credential-attestation-4853131.json
+
+$ gh attestation verify --owner salrashid123 --bundle salrashid123-aws-tpm-process-credential-attestation-4853131.json  aws-tpm-process-credential_$VERSION_linux_amd64
+```
 
 ### Encrypted TPM Sessions
 
