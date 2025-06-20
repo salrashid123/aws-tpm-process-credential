@@ -295,3 +295,105 @@ func TestKeyFileCredentials(t *testing.T) {
 
 	require.Equal(t, testAccountArn, aws.ToString(stsresp.Arn))
 }
+
+func TestToken(t *testing.T) {
+	tpmDevice, err := simulator.Get()
+	require.NoError(t, err)
+	defer tpmDevice.Close()
+
+	rwr := transport.FromReadWriter(tpmDevice)
+
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "key.pem")
+
+	persistentHandle := 0x81008001
+	_, _, closer, err := loadKey(rwr, uint(persistentHandle), filePath)
+	require.NoError(t, err)
+	defer closer()
+
+	awsKey := os.Getenv("AWS_ACCESS_KEY_ID")
+	testAccountArn := os.Getenv("AWS_ACCOUNT_ARN")
+	awsRegion := os.Getenv("AWS_DEFAULT_REGION")
+	awsSessionName := os.Getenv("AWS_ROLE_SESSION_NAME")
+	awsRoleARN := os.Getenv("AWS_ROLE_ARN")
+
+	resp, err := NewAWSTPMCredential(&AWSTPMConfig{
+		TPMCloser:        tpmDevice,
+		PersistentHandle: uint(persistentHandle),
+		Duration:         3600,
+		AWSAccessKeyID:   awsKey,
+		AWSRoleArn:       awsRoleARN,
+		AWSRegion:        awsRegion,
+		AWSSessionName:   awsSessionName,
+		AssumeRole:       false,
+	})
+	require.NoError(t, err)
+
+	t.Setenv("AWS_ACCESS_KEY_ID", resp.AccessKeyId)
+	t.Setenv("AWS_SECRET_ACCESS_KEY", resp.SecretAccessKey)
+	t.Setenv("AWS_SESSION_TOKEN", resp.SessionToken)
+
+	ctx := context.Background()
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(awsRegion))
+	require.NoError(t, err)
+
+	stssvc := sts.NewFromConfig(cfg, func(o *sts.Options) {
+		o.Region = awsRegion
+	})
+
+	stsresp, err := stssvc.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	require.NoError(t, err)
+
+	require.Equal(t, testAccountArn, aws.ToString(stsresp.Arn))
+}
+
+func TestAssumeRole(t *testing.T) {
+	tpmDevice, err := simulator.Get()
+	require.NoError(t, err)
+	defer tpmDevice.Close()
+
+	rwr := transport.FromReadWriter(tpmDevice)
+
+	tempDir := t.TempDir()
+	filePath := filepath.Join(tempDir, "key.pem")
+
+	persistentHandle := 0x81008001
+	_, _, closer, err := loadKey(rwr, uint(persistentHandle), filePath)
+	require.NoError(t, err)
+	defer closer()
+
+	awsKey := os.Getenv("AWS_ACCESS_KEY_ID")
+	testAccountArn := os.Getenv("AWS_ROLE_SESSION_ARN")
+	awsRegion := os.Getenv("AWS_DEFAULT_REGION")
+	awsSessionName := os.Getenv("AWS_ROLE_SESSION_NAME")
+	awsRoleARN := os.Getenv("AWS_ROLE_ARN")
+
+	resp, err := NewAWSTPMCredential(&AWSTPMConfig{
+		TPMCloser:        tpmDevice,
+		PersistentHandle: uint(persistentHandle),
+		Duration:         3600,
+		AWSAccessKeyID:   awsKey,
+		AWSRoleArn:       awsRoleARN,
+		AWSRegion:        awsRegion,
+		AWSSessionName:   awsSessionName,
+		AssumeRole:       true,
+	})
+	require.NoError(t, err)
+
+	t.Setenv("AWS_ACCESS_KEY_ID", resp.AccessKeyId)
+	t.Setenv("AWS_SECRET_ACCESS_KEY", resp.SecretAccessKey)
+	t.Setenv("AWS_SESSION_TOKEN", resp.SessionToken)
+
+	ctx := context.Background()
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(awsRegion))
+	require.NoError(t, err)
+
+	stssvc := sts.NewFromConfig(cfg, func(o *sts.Options) {
+		o.Region = awsRegion
+	})
+
+	stsresp, err := stssvc.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{})
+	require.NoError(t, err)
+
+	require.Equal(t, testAccountArn, aws.ToString(stsresp.Arn))
+}
