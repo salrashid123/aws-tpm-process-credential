@@ -35,7 +35,9 @@ var (
 	parentPass           = flag.String("parentPass", "", "Passphrase for the key handle (will use TPM_KEY_AUTH env var)")
 	keyPass              = flag.String("keyPass", "", "Passphrase for the key handle (will use TPM_KEY_AUTH env var)")
 	pcrs                 = flag.String("pcrs", "", "PCR Bound value (increasing order, comma separated)")
-	version              = flag.Bool("version", false, "print version")
+	useEKParent          = flag.Bool("useEKParent", false, "Use endorsement RSAKey as parent (not h2) (default: false)")
+
+	version = flag.Bool("version", false, "print version")
 
 	Commit, Tag, Date string
 )
@@ -87,6 +89,7 @@ func main() {
 		Parentpass:           parentPasswordAuth,
 		Keypass:              keyPasswordAuth,
 		Pcrs:                 *pcrs,
+		UseEKParent:          *useEKParent,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "aws-tpm-process-credential: Error getting credentials %v", err)

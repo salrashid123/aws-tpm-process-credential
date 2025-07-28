@@ -10,9 +10,9 @@ To use this, you need to save the `AWS_SECRET_ACCESS_KEY` into the TPM:
 
    With this, you "load" the `AWS_SECRET_ACCESS_KEY` into a TPM's [persistentHandle](https://trustedcomputinggroup.org/wp-content/uploads/RegistryOfReservedTPM2HandlesAndLocalities_v1p1_pub.pdf) or a TPM encrypted PEM  that it can only be used on that TPM alone. 
 
-2. Securely Transfer `AWS_SECRET_ACCESS_KEY` from one hose to another
+2. Securely Transfer `AWS_SECRET_ACCESS_KEY` from one host to another
 
-   This flow is not shown in this repo but is describe in:  [Duplicate an externally loaded HMAC key](https://github.com/salrashid123/tpm2/tree/master/tpm2_duplicate#duplicate-an-externally-loaded-hmac-key)
+   This flow is not shown in this repo but is describe in:  [Duplicate an externally loaded HMAC key](https://github.com/salrashid123/tpm2/tree/master/tpm2_duplicate#duplicate-an-externally-loaded-hmac-key) and using [tpmcopy](https://github.com/salrashid123/tpmcopy)
 
 
 This repo shows how to do `1`
@@ -42,6 +42,7 @@ You can set the following options on usage:
 | **`--assumeRole`** | Boolean flag to switch the token type returned (default: `false`) |
 | **`--duration`** | Lifetime for the AWS token (default: `3600s`) |
 | **`--timeout`** | Timeout waiting for HMAC signature from the TPM (default: `2s`) |
+| **`--useEKParent`** | Use endorsement RSAKey as parent (default: false) |
 | **`--tpm-session-encrypt-with-name`** | hex encoded TPM object 'name' to use with an encrypted session |
 
 
@@ -381,6 +382,215 @@ For example:
 You can also derive the "name" from a public key of a known template:
 
 see [go-tpm.tpm2_get_name](https://github.com/salrashid123/tpm2/tree/master/tpm2_get_name)
+
+##### Use Endorsement Key as parent
+
+If you used option `2` above to transfer the service account key from `TPM-A` to `TPM-B` (tpm-b being the system where you will run the metadata server):
+
+you can use `tpm2_duplicate` or the  utility here [tpmcopy: Transfer RSA|ECC|AES|HMAC key to a remote Trusted Platform Module (TPM)](https://github.com/salrashid123/tpmcopy) tool.  Note that the 'parent' key is set to `Endorsement RSA` which needs to get initialized on tpm-b first.  Furthermore, the key is bound by `pcr_duplicateselect` policy which must get fulfilled.
+
+The following examples shows how to use this cli if you transferred the key using pcr or password policy as well as if you saved the transferred key as PEM or persistent handle
+
+start two tpms to simulate two different system
+
+##### Setup Software TPM
+
+If you want to test locally with two [software TPM](https://github.com/stefanberger/swtpm)
+
+
+```bash
+- Start `TPM-A`
+
+```bash
+## TPM A
+rm -rf /tmp/myvtpm && mkdir /tmp/myvtpm
+/usr/share/swtpm/swtpm-create-user-config-files
+swtpm_setup --tpmstate /tmp/myvtpm --tpm2 --create-ek-cert
+swtpm socket --tpmstate dir=/tmp/myvtpm --tpm2 --server type=tcp,port=2321 --ctrl type=tcp,port=2322 --flags not-need-init,startup-clear --log level=2
+
+## in new window
+export TPM2TOOLS_TCTI="swtpm:port=2321"
+```
+
+- Start `TPM-B`
+
+```bash
+## TPM B
+rm -rf /tmp/myvtpm2 && mkdir /tmp/myvtpm2
+/usr/share/swtpm/swtpm-create-user-config-files
+swtpm_setup --tpmstate /tmp/myvtpm2 --tpm2 --create-ek-cert
+swtpm socket --tpmstate dir=/tmp/myvtpm2 --tpm2 --server type=tcp,port=2341 --ctrl type=tcp,port=2342 --flags not-need-init,startup-clear --log level=2
+
+## in new window
+export TPM2TOOLS_TCTI="swtpm:port=2341"
+
+$ tpm2_flushcontext -t &&  tpm2_flushcontext -s  &&  tpm2_flushcontext -l
+
+$ tpm2_pcrread sha256:23
+  sha256:
+    23: 0x0000000000000000000000000000000000000000000000000000000000000000
+
+$ tpm2_pcrextend 23:sha256=0x0000000000000000000000000000000000000000000000000000000000000000
+
+$ tpm2_pcrread sha256:23
+  sha256:
+    23: 0xF5A5FD42D16A20302798EF6ED309979B43003D2320D9F0E8EA9831A92759FB4B
+
+## export the ekPub
+### derive the RSA EK 
+tpm2_createek -c /tmp/ek.ctx -G rsa -u /tmp/ek.pub 
+
+tpm2_readpublic -c /tmp/ek.ctx -o /tmp/ek.pem -f PEM -n ek.name -Q
+
+tpm2_getekcertificate -X -o EKCert.bin
+openssl x509 -in EKCert.bin -inform DER -noout -text
+```
+
+to duplicate and save the key to pem file
+
+- `Password Policy`
+
+```bash
+export TPMA="127.0.0.1:2321"
+export TPMB="127.0.0.1:2341"
+
+export TPM2TOOLS_TCTI="swtpm:port=2321"
+export TPM2TOOLS_TCTI="swtpm:port=2341"
+
+### make sure the pcr value is 0xF5A5FD42D16A20302798EF6ED309979B43003D2320D9F0E8EA9831A92759FB4B
+tpm2_pcrread sha256:23
+
+### HMAC
+tpmcopy --mode duplicate --keyType=hmac --secret=/tmp/hmac.key \
+   --password=bar -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json --tpm-path=$TPMA
+
+tpmcopy --mode import  --parentKeyType=rsa --in=/tmp/out.json --out=/tmp/tpmkey.pem   --tpm-path=$TPMB
+
+### test with password and key file
+$ go run cmd/main.go -aws-region=us-east-1  \
+   --aws-session-name=mysession --assumeRole=false \
+    --credential-file=/tmp/tpmkey.pem  \
+       --aws-access-key-id=$AWS_ACCESS_KEY_ID \
+         --duration=3600  --keyPass=bar --useEKParent  --tpm-path=$TPMB
+```
+
+
+If you want to persist the actual key into NV:
+
+```bash
+# tpm-b
+tpmcopy --mode publickey --parentKeyType=rsa -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMB
+
+# tpm-a
+tpmcopy --mode duplicate  \
+   --secret=/tmp/hmac.key --keyType=hmac \
+    --password=bar -tpmPublicKeyFile=/tmp/public.pem \
+     -out=/tmp/out.json --tpm-path=$TPMA
+
+# tpm-b
+tpmcopy --mode import \
+   --pubout=/tmp/pub.dat --privout=/tmp/priv.dat --in=/tmp/out.json \
+   --out=/tmp/tpmkey.pem --tpm-path=$TPMB
+
+### then load
+tpmcopy --mode evict \
+    --persistentHandle=0x81008001 \
+   --in=/tmp/tpmkey.pem --tpm-path=$TPMB
+
+## or using tpm2_tools:
+# tpm2_createek -c ek.ctx -G rsa -u ek.pub 
+# tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+
+# tpm2 startauthsession --session session.ctx --policy-session
+# tpm2 policysecret --session session.ctx --object-context endorsement
+# tpm2_load -C ek.ctx -c key.ctx -u pub.dat -r priv.dat --auth session:session.ctx
+# tpm2_evictcontrol -c key.ctx 0x81008001
+
+$ go run cmd/main.go -aws-region=us-east-1  \
+   --aws-session-name=mysession --assumeRole=false \
+    --persistentHandle=0x81008001  \
+       --aws-access-key-id=$AWS_ACCESS_KEY_ID \
+         --duration=3600  --keyPass=bar --useEKParent  --tpm-path=$TPMB
+```
+
+* `PCR Policy`
+
+Ensure `TPM-B` as a PCR you want to bind to
+
+```bash
+$ tpm2_pcrread sha256:23
+  sha256:
+    23: 0x0000000000000000000000000000000000000000000000000000000000000000
+$ tpm2_pcrextend 23:sha256=0x0000000000000000000000000000000000000000000000000000000000000000
+$ tpm2_pcrread sha256:23
+  sha256:
+    23: 0xF5A5FD42D16A20302798EF6ED309979B43003D2320D9F0E8EA9831A92759FB4B
+```
+
+With key saved as PEM key file
+
+```bash
+### TPM-B
+tpmcopy --mode publickey --parentKeyType=rsa -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMB
+### copy public.pem to TPM-A
+
+### TPM-A
+tpmcopy --mode duplicate --keyType=hmac    --secret=/tmp/hmac.key \
+     --pcrValues=23:f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b  \
+      -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json --tpm-path=$TPMA
+### copy out.json to TPM-B
+
+### TPM-B
+tpmcopy --mode import --parentKeyType=rsa --in=/tmp/out.json --out=/tmp/tpmkey.pem --tpm-path=$TPMB
+
+### run 
+$ go run cmd/main.go -aws-region=us-east-1  \
+   --aws-session-name=mysession --assumeRole=false \
+    --credential-file=/tmp/tpmkey.pem  \
+       --aws-access-key-id=$AWS_ACCESS_KEY_ID \
+         --duration=3600  --pcrs=23 --useEKParent  --tpm-path=$TPMB
+```
+
+With key saved as a `PersistentHandle`
+
+```bash
+### TPM-B
+tpmcopy --mode publickey --parentKeyType=rsa -tpmPublicKeyFile=/tmp/public.pem --tpm-path=$TPMB
+### copy public.pem to TPM-A
+
+### TPM-A
+tpmcopy --mode duplicate --keyType=hmac    --secret=/tmp/hmac.key \
+     --pcrValues=23:f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b  \
+      -tpmPublicKeyFile=/tmp/public.pem -out=/tmp/out.json --tpm-path=$TPMA
+
+### copy out.json to TPM-B
+### TPM-B
+tpmcopy --mode import --parentKeyType=rsa \
+ --in=/tmp/out.json --out=/tmp/tpmkey.pem \
+ --pubout=/tmp/pub.dat --privout=/tmp/priv.dat \
+  --parent=0x81008000 --tpm-path=$TPMB
+
+tpmcopy --mode evict \
+    --persistentHandle=0x81008002 \
+   --in=/tmp/tpmkey.pem --tpm-path=$TPMB
+
+### or using tpm2_tools:
+# tpm2_createek -c ek.ctx -G rsa -u ek.pub 
+# tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+# tpm2 startauthsession --session session.ctx --policy-session
+# tpm2 policysecret --session session.ctx --object-context endorsement
+# tpm2_load -C ek.ctx -c key.ctx -u pub.dat -r priv.dat --auth session:session.ctx
+# tpm2_evictcontrol -c key.ctx 0x81008002
+# tpm2_flushcontext -t && tpm2_flushcontext -s && tpm2_flushcontext -l
+
+### run 
+$ go run cmd/main.go -aws-region=us-east-1  \
+   --aws-session-name=mysession --assumeRole=false \
+    --persistentHandle=0x81008002  \
+       --aws-access-key-id=$AWS_ACCESS_KEY_ID \
+         --duration=3600  --pcrs=23 --useEKParent  --tpm-path=$TPMB
+
+```
 
 #### References
 
