@@ -8,7 +8,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.34.1
 	github.com/foxboron/go-tpm-keyfiles v0.0.0-20250520203025-c3c3a4ec1653
 	github.com/google/go-tpm v0.9.5
-	github.com/google/go-tpm-tools v0.4.5
 	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.10.0
 )
@@ -25,10 +24,7 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-require (
-	github.com/salrashid123/aws_hmac/tpm v0.9.4-0.20250728143031-f4dba4052a42
-	github.com/salrashid123/golang-jwt-tpm v1.8.92 // indirect
-)
+require github.com/salrashid123/aws_hmac/tpm v0.9.4-0.20250728143031-f4dba4052a42
 
 require (
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.3.37 // indirect
@@ -36,9 +32,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.12.4 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.12.18 // indirect
 	github.com/aws/smithy-go v1.22.5 // indirect
-	github.com/golang-jwt/jwt/v5 v5.2.3 // indirect
 	github.com/gorilla/schema v1.4.1 // indirect
-	github.com/salrashid123/aws_hmac v0.11.0 // indirect
 	golang.org/x/crypto v0.40.0 // indirect
 	golang.org/x/sys v0.34.0 // indirect
 )

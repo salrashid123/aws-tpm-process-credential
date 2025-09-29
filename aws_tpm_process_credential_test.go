@@ -6,6 +6,7 @@ import (
 	"crypto"
 	"crypto/rand"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,14 +15,16 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	keyfile "github.com/foxboron/go-tpm-keyfiles"
-	"github.com/google/go-tpm-tools/simulator"
+
 	"github.com/google/go-tpm/tpm2"
 	"github.com/google/go-tpm/tpm2/transport"
 
 	"github.com/stretchr/testify/require"
 )
 
-var ()
+const (
+	swTPMPath = "127.0.0.1:2321"
+)
 
 func loadKey(rwr transport.TPM, persistentHandle uint, keyFilePath string) (tpm2.TPMHandle, tpm2.TPM2BName, func(), error) {
 
@@ -177,7 +180,7 @@ func loadKey(rwr transport.TPM, persistentHandle uint, keyFilePath string) (tpm2
 	return hmacKey.ObjectHandle, pub.Name, closer, nil
 }
 func TestPersistentHandleCredentials(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -227,7 +230,7 @@ func TestPersistentHandleCredentials(t *testing.T) {
 }
 
 func TestKeyFileCredentials(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -236,7 +239,7 @@ func TestKeyFileCredentials(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "key.pem")
 
-	persistentHandle := 0x81008001
+	persistentHandle := 0x81008002
 	_, _, closer, err := loadKey(rwr, uint(persistentHandle), filePath)
 	require.NoError(t, err)
 	defer closer()
@@ -297,7 +300,7 @@ func TestKeyFileCredentials(t *testing.T) {
 }
 
 func TestToken(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -306,7 +309,7 @@ func TestToken(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "key.pem")
 
-	persistentHandle := 0x81008001
+	persistentHandle := 0x81008003
 	_, _, closer, err := loadKey(rwr, uint(persistentHandle), filePath)
 	require.NoError(t, err)
 	defer closer()
@@ -348,7 +351,7 @@ func TestToken(t *testing.T) {
 }
 
 func TestAssumeRole(t *testing.T) {
-	tpmDevice, err := simulator.Get()
+	tpmDevice, err := net.Dial("tcp", swTPMPath)
 	require.NoError(t, err)
 	defer tpmDevice.Close()
 
@@ -357,7 +360,7 @@ func TestAssumeRole(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := filepath.Join(tempDir, "key.pem")
 
-	persistentHandle := 0x81008001
+	persistentHandle := 0x81008004
 	_, _, closer, err := loadKey(rwr, uint(persistentHandle), filePath)
 	require.NoError(t, err)
 	defer closer()

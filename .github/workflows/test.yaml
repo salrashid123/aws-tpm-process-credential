@@ -1,0 +1,41 @@
+name: Go Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+
+
+      - name: Install a swtpm
+        run: |
+          sudo apt-get update && sudo apt-get -y install swtpm swtpm-tools
+
+      - name: run swtpm
+        run: |
+          mkdir /tmp/myvtpm && /usr/share/swtpm/swtpm-create-user-config-files && swtpm_setup --tpmstate /tmp/myvtpm --tpm2 --create-ek-cert && swtpm socket --tpmstate dir=/tmp/myvtpm --tpm2 --server type=tcp,port=2321 --ctrl type=tcp,port=2322 --flags not-need-init,startup-clear &
+
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Run tests
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}    
+          AWS_SECRET_ACCESS_KEY:  ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_ACCOUNT_ARN: ${{ secrets.AWS_ACCOUNT_ARN }}                    
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          AWS_ROLE_SESSION_ARN: ${{ secrets.AWS_ROLE_SESSION_ARN }} 
+          AWS_ROLE_SESSION_NAME: ${{ secrets.AWS_ROLE_SESSION_NAME }}     
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}              
+        run: go test -v ./...
